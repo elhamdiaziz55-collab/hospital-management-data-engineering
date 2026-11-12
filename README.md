@@ -78,17 +78,19 @@ psql -d hospital_db -f docs/operational_database_schema.sql
 
 Then check the tables with `\dt` in `psql`.
 
+
 ## Known limitations
 
-These rules are not enforced by constraints. They are deliberate simplifications and
-will be handled with queries, views or validation checks in later parts.
+These rules are not enforced by constraints, because a `CHECK`, `UNIQUE` or foreign key
+only sees one row or one key and cannot count or sum other rows. They require
+**triggers**, which I have not learned yet. 
+| Limitation | Why a constraint cannot enforce it | Planned solution |
+|---|---|---|
+| **Room capacity:** a room can receive more patients than its capacity | Needs to count the patients in the room at a given time | Trigger on `hospitalization` |
+| **Overpayment:** completed payments can exceed the invoice total | Needs to sum the other payments of the invoice | Trigger on `payment` |
+| **Invoice total** is not checked against the sum of its billing lines | Needs to sum rows from another table | Trigger on `billing_line` |
+| **Invoice status** is stored, so it can drift from the real payments | Needs to be recalculated each time a payment changes | Trigger on `payment` (or a computed view) |
 
-- **Room capacity** is not limited per room over time, so the room can be overfilled.
-- **Overlapping appointments** are not detected. Only the same start time is blocked.
-- **Overpayment:** completed payments can exceed the invoice total.
-- **Invoice total** is not checked against the sum of its billing lines.
-- **Patient on billing lines:** a billed consultation may belong to a different patient than the invoice.
-- **Invoice status** is stored, not computed, so it can drift from the real payments.
 
 ## Roadmap
 
