@@ -1,66 +1,112 @@
 # Hospital Management Database (PostgreSQL)
 
-Relational database design for a private hospital: departments, doctors, patients,
-appointments, consultations, prescriptions, rooms, hospitalizations, invoices and payments.
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-336791?logo=postgresql&logoColor=white)
+![Status](https://img.shields.io/badge/status-Part%201%20complete-brightgreen)
+![License](https://img.shields.io/badge/license-see%20LICENSE-blue)
 
-> **Status:** Part 1 of the challenge: conceptual model, relational schema, synthetic data
-> and constraint tests. Queries, views, warehouse, security and partitioning are on the roadmap.
+Relational database for a private hospital, designed from written business rules:
+departments, doctors, patients, appointments, consultations, prescriptions, rooms,
+hospitalizations, invoices and payments.
 
-![ER diagram](docs/images/er_diagram.png)
+The goal is to practise end-to-end data engineering on one realistic domain: modeling,
+SQL, analytics, a data warehouse, security and performance. This repository is built in
+stages, and each stage is added as a new part.
 
-## What this project demonstrates
-- Turning written business rules into an ER model and a normalized relational schema
-- Enforcing rules **inside the database** with PK/FK, UNIQUE, CHECK, NOT NULL and composite FKs
-- Testing the design: every rule has a violation test that must fail
-- Documenting assumptions and known limitations honestly
+> **Current status:** Part 1 is done (ER model, relational schema, constraints).
+> Later parts are listed in the [roadmap](#roadmap).
+
+## Contents
+- [Documentation](#documentation)
+- [ER diagram](#er-diagram)
+- [Database overview](#database-overview)
+- [Design highlights](#design-highlights)
+- [How to run](#how-to-run)
+- [Known limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [Credits](#credits)
+
+## Documentation
+
+| Document | Content |
+|---|---|
+| [`docs/ER_MODEL.png`](docs/ER_MODEL.png) | Entity-relationship diagram of the operational database |
+| [`docs/business_rules.md`](docs/business_rules.md) | Every business rule enforced by the schema, with the constraint that enforces it |
+| [`docs/operational_database_schema.sql`](docs/operational_database_schema.sql) | Full PostgreSQL schema: tables, keys and constraints |
+
+## ER diagram
+
+![ER diagram of the hospital database](docs/ER_MODEL.png)
+
+## Database overview
+
+12 tables in 5 functional areas:
+
+| Area | Tables |
+|---|---|
+| Organization | `departments`, `doctors` |
+| Patients and scheduling | `patients`, `appointments` |
+| Clinical | `consultation`, `medications`, `prescription_line` |
+| Inpatient | `room`, `hospitalization` |
+| Billing | `invoice`, `billing_line`, `payment` |
 
 ## Design highlights
+
+The main idea is to enforce business rules **inside the database** (keys, CHECKs and
+composite foreign keys), not only in application code. The full list is in
+[`docs/business_rules.md`](docs/business_rules.md).
+
 | Business rule | How it is enforced |
 |---|---|
-| A consultation comes from a **completed** appointment (walk-ins/emergencies allowed) | Composite FK `(appointmentId, patientId, doctorId, status)` plus a CHECK, with no trigger |
+| A consultation comes from a **completed** appointment; walk-ins and emergencies are allowed | Composite FK `(appointmentId, patientId, doctorId, status)` plus a CHECK, with no trigger |
+| The consultation has the same patient and doctor as its appointment | The same composite FK |
 | One appointment gives at most one consultation | `UNIQUE` on `consultation.appointmentId` |
-| A doctor cannot have two appointments at the same time | `UNIQUE (doctorId, appointment_date_time)` |
-| A medication appears in many consultations, with per-consultation dosage | Associative table `prescription_line` |
-| An invoice is paid in installments; paid / partial / unpaid | 1:N `invoice` to `payments`, balance computed from completed payments |
-| Each billing line matches its type | CHECK on `line_type` vs reference columns |
-
-More detail in [`docs/design_decisions.md`](docs/design_decisions.md).
+| A doctor cannot have two appointments starting at the same time | `UNIQUE (doctorId, appointment_date_time)` |
+| A medication appears in many consultations, with its own dosage each time | Associative table `prescription_line` |
+| A private room holds exactly one patient | CHECK on `room_type` and `capacity` |
+| A stay has a discharge date if and only if it is discharged | CHECK on `status` and `discharge_datetime` |
+| An invoice can be paid in several installments | 1:N `invoice` to `payment` |
+| Each billing line references only what matches its type | CHECK on `line_type` and the reference columns |
 
 ## How to run
+
 Requires PostgreSQL 14+ and `psql`.
 
 ```bash
 createdb hospital_db
-psql -d hospital_db -f sql/02_create_operational_tables.sql
-psql -d hospital_db -f sql/03_indexes.sql
-psql -d hospital_db -f sql/04_load_synthetic_data.sql
-psql -d hospital_db -f tests/01_appointments_constraints.sql   # prints PASS/FAIL per rule
+psql -d hospital_db -f docs/operational_database_schema.sql
 ```
 
-## Documentation
-- [Business rules](docs/business_rules.md)
-- [Assumptions](docs/assumptions.md)
-- [Design decisions](docs/design_decisions.md)
-- [Data dictionary](docs/data_dictionary.md)
-- [Known limitations](docs/limitations.md)
+Then check the tables with `\dt` in `psql`.
 
 ## Known limitations
-- Room capacity is not enforced by constraints (detection query provided).
-- Overpayment and "invoice total = sum of lines" are not enforced.
-- Same-start-time appointments are blocked, but true time overlaps are not.
+
+These rules are not enforced by constraints. They are deliberate simplifications and
+will be handled with queries, views or validation checks in later parts.
+
+- **Room capacity** is not limited per room over time, so the room can be overfilled.
+- **Overlapping appointments** are not detected. Only the same start time is blocked.
+- **Overpayment:** completed payments can exceed the invoice total.
+- **Invoice total** is not checked against the sum of its billing lines.
+- **Patient on billing lines:** a billed consultation may belong to a different patient than the invoice.
+- **Invoice status** is stored, not computed, so it can drift from the real payments.
 
 ## Roadmap
-- [x] Conceptual model (ERD)
-- [x] Relational schema and constraints
-- [x] Synthetic data
-- [x] Constraint tests
-- [ ] SQL queries (joins, subqueries, CTEs, window functions)
-- [ ] Views and materialized views
-- [ ] Star and snowflake warehouse, SCD Type 2
-- [ ] Roles, permissions and row-level security
-- [ ] Partitioning and performance
-- [ ] Data quality checks
+
+| Part | Topic | Status |
+|---|---|---|
+| A | Conceptual model (ERD) | Done |
+| B | Relational model and normalization | Done |
+| C | Operational schema (DDL, constraints) | Done |
+| C | Synthetic data and constraint tests | Planned |
+| D | SQL queries: joins, aggregation, subqueries, CASE | Planned |
+| E | Views and materialized views | Planned |
+| F | Advanced SQL: CTEs, window functions, dates | Planned |
+| G | Data warehouse: star schema, snowflake schema, SCD Type 2 | Planned |
+| H | Roles, permissions and row-level security | Planned |
+| I | Partitioning and query performance | Planned |
+| J | Data quality checks and management analysis | Planned |
 
 ## Credits
-Based on the *Hospital Management Data Engineering Challenge* ([source](PASTE-LINK-HERE)).
-All data in this repository is synthetic.
+
+Based on the *Hospital Management Data Engineering Challenge*
+([source](PASTE-LINK-HERE)). All data in this project is synthetic.
