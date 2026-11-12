@@ -94,6 +94,370 @@ only sees one row or one key and cannot count or sum other rows. They require
 | **Invoice total** is not checked against the sum of its billing lines | Needs to sum rows from another table | Trigger on `billing_line` |
 | **Invoice status** is stored, so it can drift from the real payments | Needs to be recalculated each time a payment changes | Trigger on `payment` (or a computed view) |
 
+
+
+
+# SQL queries
+
+Queries on the operational hospital database, grouped by topic.
+Techniques used: SELECT/WHERE, aggregation, JOINs, subqueries, EXISTS, CASE.
+
+## Prerequisite: medication price
+
+The `medications` table needs a price for the questions D1.5, D2.2, D4.2 and D5.4.
+
+```sql
+alter table medications add column unit_price numeric(10,2) check (unit_price >= 0);
+
+update medications set unit_price = 12.50 where medicationId = 1;  -- Amoxicillin
+update medications set unit_price = 3.20  where medicationId = 2;  -- Paracetamol
+update medications set unit_price = 5.80  where medicationId = 3;  -- Ibuprofen
+update medications set unit_price = 9.90  where medicationId = 4;  -- Omeprazole
+update medications set unit_price = 4.50  where medicationId = 5;  -- Cetirizine
+```
+
+---
+
+## D1. Basic SELECT and filtering
+
+**1. Retrieve all registered patients.**
+```sql
+select * from patients;
+```
+
+**2. Display each doctor's name and specialty.**
+```sql
+select name, specialty from doctors;
+```
+
+**3. Find patients born after 1 January 2000.**
+```sql
+select patientId, name, dateOfBirth
+from patients
+where dateOfBirth > '2000-01-01';
+```
+
+**4. Find confirmed appointments.**
+```sql
+select * from appointments
+where status = 'confirmed';
+```
+
+**5. Find medications priced above a chosen threshold (here 5).**
+```sql
+select medicationId, name, unit_price
+from medications
+where unit_price > 5;
+```
+
+**6. Display the most recent appointments first.**
+```sql
+select * from appointments
+order by appointment_date_time desc;
+```
+
+**7. Find appointments within a specified date range (all of November 2026).**
+```sql
+select * from appointments
+where appointment_date_time >= '2026-11-01'
+  and appointment_date_time <  '2026-12-01'
+order by appointment_date_time;
+```
+The end date is exclusive (`< 2026-12-01`), so appointments on the last day of the month, at any time, are included.
+
+**8. Find patients whose phone number is missing.**
+```sql
+select patientId, name
+from patients
+where contact_details is null;
+```
+Assumption: the schema has no separate phone column, so missing contact details is used as the missing phone.
+
+---
+
+## D2. Aggregation
+
+**1. Count all registered patients.**
+```sql
+select count(*) as nb_patients from patients;
+```
+
+**2. Calculate the average medication price.**
+```sql
+select round(avg(unit_price), 2) as avg_price from medications;
+```
+
+**3. Count appointments by status.**
+```sql
+select status, count(*) as nb_appointments
+from appointments
+group by status
+order by nb_appointments desc;
+```
+
+**4. Count doctors in each department.**
+```sql
+select d.name as department, count(doc.doctorId) as nb_doctors
+from departments d
+left join doctors doc on doc.codeDep = d.codeDep
+group by d.codeDep, d.name
+order by nb_doctors desc;
+```
+The `left join` keeps departments that have no doctors (count 0).
+
+**5. Find departments with more than three doctors.**
+```sql
+select d.name as department, count(doc.doctorId) as nb_doctors
+from departments d
+join doctors doc on doc.codeDep = d.codeDep
+group by d.codeDep, d.name
+having count(doc.doctorId) > 3;
+```
+
+**6. Calculate appointment count per doctor, including doctors with zero appointments.**
+```sql
+select doc.doctorId, doc.name, count(a.appointmentId) as nb_appointments
+from doctors doc
+left join appointments a on a.doctorId = doc.doctorId
+group by doc.doctorId, doc.name
+order by nb_appointments desc;
+```
+Count `a.appointmentId`, not `*`: with `count(*)`, a doctor with no appointments would show 1 instead of 0.
+
+**7. Calculate total payments received per month.**
+```sql
+select date_trunc('month', payment_date) as month,
+       sum(amount) as total_received
+from payment
+where status = 'completed'
+group by date_trunc('month', payment_date)
+order by month;
+```
+Only `completed` payments count as received. Pending, failed and refunded payments are excluded.
+
+**8. Find patients with more than two appointments.**
+```sql
+select p.patientId, p.name, count(a.appointmentId) as nb_appointments
+from patients p
+join appointments a on a.patientId = p.patientId
+group by p.patientId, p.name
+having count(a.appointmentId) > 2;
+```
+
+---
+
+## D3. JOINs
+
+**1. Display appointments with patient and doctor names.**
+```sql
+select a.appointmentId, a.appointment_date_time, a.status,
+       p.name as patient, d.name as doctor
+from appointments a
+join patients p on p.patientId = a.patientId
+join doctors  d on d.doctorId  = a.doctorId
+order by a.appointment_date_time;
+```
+
+**2. Display doctors with their department names.**
+```sql
+select doc.doctorId, doc.name as doctor, doc.specialty, dep.name as department
+from doctors doc
+join departments dep on dep.codeDep = doc.codeDep;
+```
+
+**3. Retrieve consultations with patient and doctor details.**
+```sql
+select c.consultationId, c.consultation_type, c.consult_datetime,
+       p.name as patient, d.name as doctor, d.specialty,
+       c.symptoms, c.diagnosis
+from consultation c
+join patients p on p.patientId = c.patientId
+join doctors  d on d.doctorId  = c.doctorId
+order by c.consult_datetime;
+```
+
+**4. Display hospitalization records with room information.**
+```sql
+select h.patientId, h.admission_datetime, h.discharge_datetime, h.status,
+       r.room_number, r.room_type, r.capacity
+from hospitalization h
+join room r on r.roomId = h.roomId
+order by h.admission_datetime;
+```
+
+**5. Display invoices with patient names.**
+```sql
+select i.invoiceId, i.invoice_number, p.name as patient,
+       i.issue_date, i.due_date, i.status, i.total_amount
+from invoice i
+join patients p on p.patientId = i.patientId;
+```
+
+**6. Find patients who have never made an appointment.**
+```sql
+select p.patientId, p.name
+from patients p
+left join appointments a on a.patientId = p.patientId
+where a.appointmentId is null;
+```
+
+**7. Find doctors who have never had an appointment.**
+```sql
+select d.doctorId, d.name
+from doctors d
+left join appointments a on a.doctorId = d.doctorId
+where a.appointmentId is null;
+```
+
+**8. List each consultation and its prescribed medication lines.**
+```sql
+select c.consultationId, c.consult_datetime,
+       m.name as medication, pl.dosage, pl.frequency,
+       pl.duration_days, pl.quantity
+from consultation c
+join prescription_line pl on pl.consulationId = c.consultationId
+join medications m        on m.medicationId   = pl.medicationId
+order by c.consultationId, m.name;
+```
+This uses an inner join, so consultations without prescriptions don't appear. To list them too, replace both `join` with `left join`.
+
+---
+
+## D4. Subqueries and set logic
+
+**1. Find doctors whose appointment count is above the average across doctors.**
+```sql
+select doc.doctorId, doc.name, count(a.appointmentId) as nb_appointments
+from doctors doc
+left join appointments a on a.doctorId = doc.doctorId
+group by doc.doctorId, doc.name
+having count(a.appointmentId) > (
+    select avg(t.nb)
+    from (
+        select count(a2.appointmentId) as nb
+        from doctors d2
+        left join appointments a2 on a2.doctorId = d2.doctorId
+        group by d2.doctorId
+    ) t
+);
+```
+The inner query counts appointments per doctor (doctors with zero included). The middle query averages those counts. The outer query keeps the doctors above that average.
+
+**2. Find medications priced above the average medication price.**
+```sql
+select medicationId, name, unit_price
+from medications
+where unit_price > (select avg(unit_price) from medications);
+```
+
+**3. Find patients with more appointments than the average patient.**
+```sql
+select p.patientId, p.name, count(a.appointmentId) as nb_appointments
+from patients p
+left join appointments a on a.patientId = p.patientId
+group by p.patientId, p.name
+having count(a.appointmentId) > (
+    select avg(t.nb)
+    from (
+        select count(a2.appointmentId) as nb
+        from patients p2
+        left join appointments a2 on a2.patientId = p2.patientId
+        group by p2.patientId
+    ) t
+);
+```
+
+**4. Find the invoice with the highest total amount.**
+```sql
+select invoiceId, invoice_number, total_amount
+from invoice
+where total_amount = (select max(total_amount) from invoice);
+```
+If several invoices share the maximum, all of them are returned.
+
+**5. Find patients who have never received a consultation.**
+```sql
+select p.patientId, p.name
+from patients p
+where not exists (
+    select 1 from consultation c
+    where c.patientId = p.patientId
+);
+```
+
+**6. Use EXISTS to identify patients with at least one unpaid invoice.**
+```sql
+select p.patientId, p.name
+from patients p
+where exists (
+    select 1 from invoice i
+    where i.patientId = p.patientId
+      and i.status = 'unpaid'
+);
+```
+To include partially paid invoices, replace the status condition with `i.status in ('unpaid', 'partially_paid')`.
+
+---
+
+## D5. CASE expressions
+
+**1. Classify invoices as Paid, Partially Paid or Unpaid (total vs successful payments).**
+```sql
+select i.invoiceId, i.invoice_number, i.total_amount,
+       coalesce(sum(p.amount), 0) as paid_amount,
+       case
+           when coalesce(sum(p.amount), 0) = 0              then 'Unpaid'
+           when coalesce(sum(p.amount), 0) < i.total_amount then 'Partially Paid'
+           else 'Paid'
+       end as payment_status
+from invoice i
+left join payment p on p.invoiceId = i.invoiceId
+                   and p.status = 'completed'
+group by i.invoiceId, i.invoice_number, i.total_amount
+order by i.invoiceId;
+```
+The `completed` filter is in the `ON` clause, not in `WHERE`. In `WHERE` it would remove invoices with no completed payment, and those must stay as "Unpaid".
+
+**2. Classify patients by age: Minor (under 18), Adult (18 to 60), Senior (over 60).**
+```sql
+select patientId, name, dateOfBirth,
+       extract(year from age(dateOfBirth)) as age,
+       case
+           when extract(year from age(dateOfBirth)) < 18  then 'Minor'
+           when extract(year from age(dateOfBirth)) <= 60 then 'Adult'
+           else 'Senior'
+       end as age_group
+from patients;
+```
+
+**3. Create a readable label for each appointment status.**
+```sql
+select appointmentId, appointment_date_time, status,
+       case status
+           when 'scheduled' then 'Scheduled, not yet confirmed'
+           when 'confirmed' then 'Confirmed by the patient'
+           when 'completed' then 'Visit completed'
+           when 'cancelled' then 'Cancelled'
+           when 'no-show'   then 'Patient did not show up'
+           else 'Unknown status'
+       end as status_label
+from appointments;
+```
+
+**4. Group medications into price bands.**
+```sql
+select medicationId, name, unit_price,
+       case
+           when unit_price < 5  then 'Low (under 5)'
+           when unit_price < 10 then 'Medium (5 to 9.99)'
+           else 'High (10 and over)'
+       end as price_band
+from medications
+order by unit_price;
+```
+
+
+
 ## Credits
 
 Based on the *Hospital Management Data Engineering Challenge*
