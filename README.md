@@ -104,19 +104,6 @@ Techniques used: SELECT/WHERE, aggregation, JOINs, subqueries, EXISTS, CASE.
 
 ## Prerequisite: medication price
 
-The `medications` table needs a price for the questions D1.5, D2.2, D4.2 and D5.4.
-
-```sql
-alter table medications add column unit_price numeric(10,2) check (unit_price >= 0);
-
-update medications set unit_price = 12.50 where medicationId = 1;  -- Amoxicillin
-update medications set unit_price = 3.20  where medicationId = 2;  -- Paracetamol
-update medications set unit_price = 5.80  where medicationId = 3;  -- Ibuprofen
-update medications set unit_price = 9.90  where medicationId = 4;  -- Omeprazole
-update medications set unit_price = 4.50  where medicationId = 5;  -- Cetirizine
-```
-
----
 
 ## D1. Basic SELECT and filtering
 
@@ -143,29 +130,22 @@ select * from appointments
 where status = 'confirmed';
 ```
 
-**5. Find medications priced above a chosen threshold (here 5).**
-```sql
-select medicationId, name, unit_price
-from medications
-where unit_price > 5;
-```
 
-**6. Display the most recent appointments first.**
+**5. Display the most recent appointments first.**
 ```sql
 select * from appointments
 order by appointment_date_time desc;
 ```
 
-**7. Find appointments within a specified date range (all of November 2026).**
+**6. Find appointments within a specified date range (all of November 2026).**
 ```sql
 select * from appointments
 where appointment_date_time >= '2026-11-01'
   and appointment_date_time <  '2026-12-01'
 order by appointment_date_time;
 ```
-The end date is exclusive (`< 2026-12-01`), so appointments on the last day of the month, at any time, are included.
 
-**8. Find patients whose phone number is missing.**
+**7. Find patients whose phone number is missing.**
 ```sql
 select patientId, name
 from patients
@@ -182,12 +162,8 @@ Assumption: the schema has no separate phone column, so missing contact details 
 select count(*) as nb_patients from patients;
 ```
 
-**2. Calculate the average medication price.**
-```sql
-select round(avg(unit_price), 2) as avg_price from medications;
-```
 
-**3. Count appointments by status.**
+**2. Count appointments by status.**
 ```sql
 select status, count(*) as nb_appointments
 from appointments
@@ -209,7 +185,7 @@ The `left join` keeps departments that have no doctors (count 0).
 ```sql
 select d.name as department, count(doc.doctorId) as nb_doctors
 from departments d
-join doctors doc on doc.codeDep = d.codeDep
+left join doctors doc on doc.codeDep = d.codeDep
 group by d.codeDep, d.name
 having count(doc.doctorId) > 3;
 ```
@@ -222,7 +198,6 @@ left join appointments a on a.doctorId = doc.doctorId
 group by doc.doctorId, doc.name
 order by nb_appointments desc;
 ```
-Count `a.appointmentId`, not `*`: with `count(*)`, a doctor with no appointments would show 1 instead of 0.
 
 **7. Calculate total payments received per month.**
 ```sql
