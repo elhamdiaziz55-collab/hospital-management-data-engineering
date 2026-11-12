@@ -1,19 +1,23 @@
 # Hospital Management Database (PostgreSQL)
 
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-336791?logo=postgresql&logoColor=white)
-![Status](https://img.shields.io/badge/status-Part%201%20complete-brightgreen)
-![License](https://img.shields.io/badge/license-see%20LICENSE-blue)
 
-Relational database for a private hospital, designed from written business rules:
-departments, doctors, patients, appointments, consultations, prescriptions, rooms,
-hospitalizations, invoices and payments.
+A data engineering mini-project built around one realistic domain: a private hospital
+that manages departments, doctors, patients, appointments, consultations, prescriptions,
+rooms, hospitalizations, invoices and payments.
 
-The goal is to practise end-to-end data engineering on one realistic domain: modeling,
-SQL, analytics, a data warehouse, security and performance. This repository is built in
-stages, and each stage is added as a new part.
+The project goes from written business rules to a complete data platform, and is meant to
+demonstrate hands-on skills in both **OLTP** and **OLAP** systems with PostgreSQL:
 
-> **Current status:** Part 1 is done (ER model, relational schema, constraints).
-> Later parts are listed in the [roadmap](#roadmap).
+- **OLTP:** designing and implementing a normalized operational database, with business
+  rules enforced by keys, constraints and composite foreign keys
+- **SQL for analytics:** joins, aggregations, subqueries, CTEs and window functions to
+  answer management questions
+- **Views:** normal and materialized views as a reusable analytics layer
+- **OLAP:** dimensional modeling with star and snowflake schemas, built from the
+  operational source
+- **Access control:** roles, privileges and least-privilege design
+- **Performance:** table partitioning for large time-based tables
 
 ## Contents
 - [Documentation](#documentation)
@@ -22,7 +26,6 @@ stages, and each stage is added as a new part.
 - [Design highlights](#design-highlights)
 - [How to run](#how-to-run)
 - [Known limitations](#known-limitations)
-- [Roadmap](#roadmap)
 - [Credits](#credits)
 
 ## Documentation
@@ -78,35 +81,18 @@ psql -d hospital_db -f docs/operational_database_schema.sql
 
 Then check the tables with `\dt` in `psql`.
 
-
 ## Known limitations
 
 These rules are not enforced by constraints, because a `CHECK`, `UNIQUE` or foreign key
 only sees one row or one key and cannot count or sum other rows. They require
-**triggers**, which I have not learned yet. 
+**triggers**, which I have not learned yet.
+
 | Limitation | Why a constraint cannot enforce it | Planned solution |
 |---|---|---|
 | **Room capacity:** a room can receive more patients than its capacity | Needs to count the patients in the room at a given time | Trigger on `hospitalization` |
 | **Overpayment:** completed payments can exceed the invoice total | Needs to sum the other payments of the invoice | Trigger on `payment` |
 | **Invoice total** is not checked against the sum of its billing lines | Needs to sum rows from another table | Trigger on `billing_line` |
 | **Invoice status** is stored, so it can drift from the real payments | Needs to be recalculated each time a payment changes | Trigger on `payment` (or a computed view) |
-
-
-## Roadmap
-
-| Part | Topic | Status |
-|---|---|---|
-| A | Conceptual model (ERD) | Done |
-| B | Relational model and normalization | Done |
-| C | Operational schema (DDL, constraints) | Done |
-| C | Synthetic data and constraint tests | Planned |
-| D | SQL queries: joins, aggregation, subqueries, CASE | Planned |
-| E | Views and materialized views | Planned |
-| F | Advanced SQL: CTEs, window functions, dates | Planned |
-| G | Data warehouse: star schema, snowflake schema, SCD Type 2 | Planned |
-| H | Roles, permissions and row-level security | Planned |
-| I | Partitioning and query performance | Planned |
-| J | Data quality checks and management analysis | Planned |
 
 ## Credits
 
