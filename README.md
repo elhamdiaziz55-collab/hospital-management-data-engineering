@@ -11,7 +11,7 @@ demonstrate hands-on skills in both **OLTP** and **OLAP** systems with PostgreSQ
 
 - **OLTP:** designing and implementing a normalized operational database, with business
   rules enforced by keys, constraints and composite foreign keys
-- **SQL for analytics:** joins, aggregations, subqueries, CTEs and window functions to
+- **SQL for analytics:** joins, aggregations, subqueries to
   answer management questions
 - **Views:** normal and materialized views as a reusable analytics layer
 - **OLAP:** dimensional modeling with star and snowflake schemas, built from the
