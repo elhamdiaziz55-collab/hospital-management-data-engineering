@@ -294,9 +294,7 @@ join prescription_line pl on pl.consulationId = c.consultationId
 join medications m        on m.medicationId   = pl.medicationId
 order by c.consultationId, m.name;
 ```
-This uses an inner join, so consultations without prescriptions don't appear. To list them too, replace both `join` with `left join`.
 
----
 
 ## D4. Subqueries and set logic
 
@@ -318,14 +316,8 @@ having count(a.appointmentId) > (
 ```
 The inner query counts appointments per doctor (doctors with zero included). The middle query averages those counts. The outer query keeps the doctors above that average.
 
-**2. Find medications priced above the average medication price.**
-```sql
-select medicationId, name, unit_price
-from medications
-where unit_price > (select avg(unit_price) from medications);
-```
 
-**3. Find patients with more appointments than the average patient.**
+**2. Find patients with more appointments than the average patient.**
 ```sql
 select p.patientId, p.name, count(a.appointmentId) as nb_appointments
 from patients p
@@ -342,15 +334,14 @@ having count(a.appointmentId) > (
 );
 ```
 
-**4. Find the invoice with the highest total amount.**
+**3. Find the invoice with the highest total amount.**
 ```sql
 select invoiceId, invoice_number, total_amount
 from invoice
 where total_amount = (select max(total_amount) from invoice);
 ```
-If several invoices share the maximum, all of them are returned.
 
-**5. Find patients who have never received a consultation.**
+**4. Find patients who have never received a consultation.**
 ```sql
 select p.patientId, p.name
 from patients p
@@ -360,7 +351,7 @@ where not exists (
 );
 ```
 
-**6. Use EXISTS to identify patients with at least one unpaid invoice.**
+**5. Use EXISTS to identify patients with at least one unpaid invoice.**
 ```sql
 select p.patientId, p.name
 from patients p
@@ -370,9 +361,6 @@ where exists (
       and i.status = 'unpaid'
 );
 ```
-To include partially paid invoices, replace the status condition with `i.status in ('unpaid', 'partially_paid')`.
-
----
 
 ## D5. CASE expressions
 
