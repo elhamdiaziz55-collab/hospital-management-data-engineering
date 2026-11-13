@@ -379,7 +379,27 @@ left join payment p on p.invoiceId = i.invoiceId
 group by i.invoiceId, i.invoice_number, i.total_amount
 order by i.invoiceId;
 ```
-The `completed` filter is in the `ON` clause, not in `WHERE`. In `WHERE` it would remove invoices with no completed payment, and those must stay as "Unpaid".
+But also i prefer doing it with subqueries , this is another method :
+
+```sql
+select t.invoice_number,
+       t.total_amount,
+       t.paid_amount,
+       case
+           when t.paid_amount = 0                then 'UNPAID'
+           when t.paid_amount >= t.total_amount  then 'PAID'
+           else 'PARTIALLY PAID'
+       end as calculated_status
+from (
+    select i.invoice_number,
+           i.total_amount,
+           (select coalesce(sum(p.amount), 0)
+            from payments p
+            where p.invoiceId = i.invoiceId
+              and p.status = 'completed') as paid_amount
+    from invoice i
+) t;
+```
 
 **2. Classify patients by age: Minor (under 18), Adult (18 to 60), Senior (over 60).**
 ```sql
