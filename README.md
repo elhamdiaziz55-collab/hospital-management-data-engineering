@@ -102,8 +102,6 @@ only sees one row or one key and cannot count or sum other rows. They require
 Queries on the operational hospital database, grouped by topic.
 Techniques used: SELECT/WHERE, aggregation, JOINs, subqueries, EXISTS, CASE.
 
-## Prerequisite: medication price
-
 
 ## D1. Basic SELECT and filtering
 
@@ -427,21 +425,217 @@ select appointmentId, appointment_date_time, status,
 from appointments;
 ```
 
-**4. Group medications into price bands.**
+# Part E: Views and Reusable Analytics
+
+
+| Situation | Choice | Reason |
+|---|---|---|
+| Data changes constantly and results must be current | **Normal view** | Runs the query on every read, so it is always up to date |
+| Query is expensive, read often, small staleness is acceptable | **Materialized view** | Stores the result on disk, so reads are fast until the next refresh |
+
+Appointments and invoices are transactional (OLTP) data: bookings, cancellations and payments happen all day, so they use normal views. Consultation history and revenue aggregates are read far more than they change, so they use materialized views.
+
+## 3. Views at a glance
+
+| View | Type | Grain | Purpose |
+|---|---|---|---|
+| `doctor_appointment_summary` | Normal | doctor + appointment status | Doctor workload, including doctors with no appointments |
+| `patient_history` | Materialized | consultation | Consultation history per patient |
+| `monthly_appointments` | Normal | month + appointment status | Demand trend, cancellations and no-shows |
+| `invoice_summary` | Normal | invoice | Total, amount paid, remaining balance |
+| `monthly_revenue` | Materialized | month | Billed revenue per month |
+
+---
+
+## 4. E1: Creating the views
+
+### 4.1 `doctor_appointment_summary` (normal)
+
+**Why normal:** appointments are updated frequently.
+**Key technique:** `LEFT JOIN appointments` keeps doctors with zero appointments. `COUNT(appointmentId)` ignores NULLs, so they show `0` (with `status = NULL`).
+
 ```sql
-select medicationId, name, unit_price,
-       case
-           when unit_price < 5  then 'Low (under 5)'
-           when unit_price < 10 then 'Medium (5 to 9.99)'
-           else 'High (10 and over)'
-       end as price_band
-from medications
-order by unit_price;
+CREATE VIEW doctor_appointment_summary AS
+SELECT  doc.doctorId,
+        doc.name                 AS doc_name,
+        dep.name                 AS dep_name,
+        app.status,
+        COUNT(app.appointmentId) AS nb_appointments
+FROM doctors doc
+INNER JOIN departments dep ON dep.codeDep = doc.codeDep
+LEFT  JOIN appointments app ON app.doctorId = doc.doctorId
+GROUP BY doc.doctorId, doc.name, dep.name, app.status;
 ```
 
+### 4.2 `patient_history` (materialized)
 
+**Why materialized:** consultation history is read often and changes less often, so the result is stored on disk and refreshed when needed.
+**Key technique:** `consultationId` is included so a **unique index** can be created, which enables `REFRESH MATERIALIZED VIEW CONCURRENTLY` (readers are not blocked during refresh).
 
-## Credits
+```sql
+CREATE MATERIALIZED VIEW patient_history AS
+SELECT  p.patientId,
+        p.name AS patient_name,
+        c.consultationId,
+        c.consultation_type,
+        c.consult_datetime,
+        c.symptoms,
+        c.diagnosis
+FROM patients p
+INNER JOIN consultation c USING (patientId);
 
-Based on the *Hospital Management Data Engineering Challenge*
-([source](PASTE-LINK-HERE)). All data in this project is synthetic.
+CREATE UNIQUE INDEX ux_patient_history_consultation
+    ON patient_history (consultationId);
+```
+
+### 4.3 `monthly_appointments` (normal)
+
+**Why normal:** management needs live appointment numbers.
+**Key technique:** `TO_CHAR(..., 'YYYY-MM')` groups by month, and the text format sorts chronologically.
+
+```sql
+CREATE VIEW monthly_appointments AS
+SELECT  TO_CHAR(appointment_date_time, 'YYYY-MM') AS in_month,
+        status,
+        COUNT(*)                                   AS nb_appointments
+FROM appointments
+GROUP BY TO_CHAR(appointment_date_time, 'YYYY-MM'), status;
+```
+
+### 4.4 `invoice_summary` (normal)
+
+**Why normal:** balances must always be current.
+**Key technique:** the `status = 'completed'` filter sits in the `ON` clause, **not** in `WHERE`. In `WHERE`, unpaid invoices would disappear from the result.
+**Avoiding double counting:** only one one-to-many join (invoice → payments) is used, so `total_amount` is never multiplied. Unpaid invoices get `paid_amount = 0` through `COALESCE`.
+
+```sql
+CREATE VIEW invoice_summary AS
+SELECT  i.invoiceId,
+        i.invoice_number,
+        i.patientId,
+        i.total_amount,
+        COALESCE(SUM(pay.amount), 0)                  AS paid_amount,
+        i.total_amount - COALESCE(SUM(pay.amount), 0) AS remaining_amount
+FROM invoice i
+LEFT JOIN payments pay
+       ON pay.invoiceId = i.invoiceId
+      AND pay.status = 'completed'
+GROUP BY i.invoiceId, i.invoice_number, i.patientId, i.total_amount;
+```
+
+### 4.5 `monthly_revenue` (materialized)
+
+**Measure:** *billed* revenue (invoiced amount by issue month), not cash collected.
+**Why materialized:** it aggregates all invoices, and a daily refresh is enough for reporting.
+
+```sql
+CREATE MATERIALIZED VIEW monthly_revenue AS
+SELECT  DATE_TRUNC('month', issue_date)::date AS revenue_month,
+        COUNT(*)                              AS nb_invoices,
+        SUM(total_amount)                     AS billed_revenue
+FROM invoice
+GROUP BY DATE_TRUNC('month', issue_date);
+
+CREATE UNIQUE INDEX ux_monthly_revenue_month
+    ON monthly_revenue (revenue_month);
+```
+
+---
+
+## 5. E2: Querying the views
+
+| # | Question | Status |
+|---|---|---|
+| E2.1 | Five busiest doctors | Done |
+| E2.2 | Departments above a consultation threshold | Pending (`department_performance`) |
+| E2.3 | Patients with unpaid or partially paid invoices | Done |
+| E2.4 | Month with the most appointments | Done |
+| E2.5 | Compare department performance | Pending (`department_performance`) |
+
+```sql
+-- E2.1 Five busiest doctors (total across all statuses)
+SELECT doctorId, doc_name, SUM(nb_appointments) AS total_appointments
+FROM doctor_appointment_summary
+GROUP BY doctorId, doc_name
+ORDER BY total_appointments DESC
+LIMIT 5;
+
+-- E2.3 Patients with an outstanding balance
+SELECT DISTINCT p.name AS patient_name
+FROM invoice_summary s
+INNER JOIN patients p USING (patientId)
+WHERE s.remaining_amount > 0;
+
+-- E2.4 Busiest month
+SELECT in_month, SUM(nb_appointments) AS appointments
+FROM monthly_appointments
+GROUP BY in_month
+ORDER BY appointments DESC
+LIMIT 1;
+```
+
+---
+
+## 6. E3: View management
+
+### E3.1 Replacing a view
+
+`CREATE OR REPLACE VIEW` redefines a view without dropping dependent objects. Here `codeDep` is added to `doctor_appointment_summary`. PostgreSQL only allows **new columns at the end**; existing columns must keep their names, order and types.
+
+```sql
+CREATE OR REPLACE VIEW doctor_appointment_summary AS
+SELECT  doc.doctorId,
+        doc.name                 AS doc_name,
+        dep.name                 AS dep_name,
+        app.status,
+        COUNT(app.appointmentId) AS nb_appointments,
+        dep.codeDep
+FROM doctors doc
+INNER JOIN departments dep ON dep.codeDep = doc.codeDep
+LEFT  JOIN appointments app ON app.doctorId = doc.doctorId
+GROUP BY doc.doctorId, doc.name, dep.codeDep, dep.name, app.status;
+```
+
+### E3.2 Does a normal view store rows?
+
+No. It stores only the query definition. Each time the view is queried, PostgreSQL runs the underlying query on the base tables. It behaves like a virtual table.
+
+### E3.3 Normal vs materialized view
+
+| | Normal view | Materialized view |
+|---|---|---|
+| Stores rows | No (definition only) | Yes (on disk) |
+| Freshness | Always current | As of last `REFRESH` |
+| Read speed | Query runs every time | Fast, like a table |
+| Extra cost | None | Storage + refresh time |
+| Indexes | Not possible | Possible |
+| Best for | Frequently changing data | Heavy queries read often |
+
+### E3.4–E3.5 A materialized view is a snapshot (test)
+
+```sql
+-- 1) baseline
+SELECT * FROM monthly_revenue ORDER BY revenue_month;
+
+-- 2) change the source data
+INSERT INTO invoice (invoice_number, patientId, issue_date, due_date, status, total_amount)
+VALUES ('INV-TEST-001', 1, CURRENT_DATE, CURRENT_DATE + 30, 'unpaid', 500.00);
+
+-- 3) still the OLD result (stale snapshot)
+SELECT * FROM monthly_revenue ORDER BY revenue_month;
+
+-- 4) refresh: the new invoice now appears
+REFRESH MATERIALIZED VIEW monthly_revenue;
+SELECT * FROM monthly_revenue ORDER BY revenue_month;
+
+-- 5) cleanup
+DELETE FROM invoice WHERE invoice_number = 'INV-TEST-001';
+REFRESH MATERIALIZED VIEW monthly_revenue;
+```
+
+### E3.6 When is a materialized view worth it?
+
+When the query is expensive, read often, and slightly old data is acceptable. Refresh frequency is a trade-off: refreshing more often gives fresher data but adds load, while refreshing less often is cheaper but staler. For monthly revenue, a nightly refresh is enough. 
+
+---
+
